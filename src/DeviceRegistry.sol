@@ -1,111 +1,153 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.20;
 
-/**
- * @title DeviceRegistry
- * @dev This contract allows publishers to register, update, and unregister their devices.
- */
-contract DeviceRegistry {
-    struct Device {
-        uint256 id;
-        address publisher;
-        string deviceMetadata; // Information like location, screen size, etc.
-        bool isRegistered; // Status of the device
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+
+// Interface for the Display NFT contract
+interface IDisplayNFT {
+    function mint(
+        address to,
+        string memory tokenURI
+    ) external returns (uint256);
+
+    function ownerOf(uint256 tokenId) external view returns (address);
+}
+
+// OperatorRegistry Contract
+contract OperatorRegistry is Ownable {
+    using Counters for Counters.Counter;
+
+    struct Display {
+        string macId;
+        address operator;
+        uint256 tokenId;
+        bool isActive;
+        address currentRightsHolder;
+        uint256 rightsExpiryTime;
     }
 
-    uint256 public nextDeviceId;
-    mapping(uint256 => Device) public devices; // Mapping from device ID to Device struct
-    mapping(address => uint256[]) public publisherDevices; // Devices registered by a publisher
+    Counters.Counter private _displayIds;
+    IDisplayNFT public displayNFTContract;
 
-    event DeviceRegistered(uint256 indexed deviceId, address indexed publisher);
-    event DeviceUpdated(uint256 indexed deviceId);
-    event DeviceUnregistered(uint256 indexed deviceId);
+    mapping(uint256 => Display) public displays;
+    mapping(string => bool) public registeredMacIds;
+    mapping(address => uint256[]) public operatorDisplays;
 
-    /**
-     * @dev Register a new device.
-     * @param _deviceMetadata Metadata of the device.
-     */
-    function registerDevice(
-        string memory _deviceMetadata
-    ) external returns (uint256) {
-        Device memory newDevice = Device({
-            id: nextDeviceId,
-            publisher: msg.sender,
-            deviceMetadata: _deviceMetadata,
-            isRegistered: true
+    event DisplayRegistered(
+        uint256 indexed displayId,
+        address indexed operator,
+        string macId
+    );
+    event RightsTransferred(
+        uint256 indexed displayId,
+        address indexed from,
+        address indexed to,
+        uint256 expiryTime
+    );
+
+    constructor(address _displayNFTAddress) {
+        displayNFTContract = IDisplayNFT(_displayNFTAddress);
+    }
+
+    function registerDisplay(string memory macId) external returns (uint256) {
+        require(!registeredMacIds[macId], "MAC ID already registered");
+
+        _displayIds.increment();
+        uint256 displayId = _displayIds.current();
+
+        // Mint NFT for the operator
+        string memory tokenURI = generateTokenURI(displayId, macId); // You'll implement this off-chain
+        uint256 tokenId = displayNFTContract.mint(msg.sender, tokenURI);
+
+        displays[displayId] = Display({
+            macId: macId,
+            operator: msg.sender,
+            tokenId: tokenId,
+            isActive: true,
+            currentRightsHolder: msg.sender,
+            rightsExpiryTime: 0
         });
 
-        devices[nextDeviceId] = newDevice;
-        publisherDevices[msg.sender].push(nextDeviceId);
+        registeredMacIds[macId] = true;
+        operatorDisplays[msg.sender].push(displayId);
 
-        emit DeviceRegistered(nextDeviceId, msg.sender);
-
-        nextDeviceId++;
-
-        return newDevice.id;
+        emit DisplayRegistered(displayId, msg.sender, macId);
+        return displayId;
     }
 
-    /**
-     * @dev Update an existing device's metadata.
-     * @param _deviceId ID of the device to update.
-     * @param _deviceMetadata New metadata for the device.
-     */
-    function updateDevice(
-        uint256 _deviceId,
-        string memory _deviceMetadata
+    function transferDisplayRights(
+        uint256 displayId,
+        address newRightsHolder,
+        uint256 duration
     ) external {
-        Device storage device = devices[_deviceId];
+        Display storage display = displays[displayId];
+        require(msg.sender == display.operator, "Not the operator");
+        require(display.isActive, "Display not active");
         require(
-            msg.sender == device.publisher,
-            "Only publisher can update the device"
+            display.rightsExpiryTime < block.timestamp,
+            "Existing rights not expired"
         );
-        require(device.isRegistered, "Device is not registered");
 
-        device.deviceMetadata = _deviceMetadata;
+        display.currentRightsHolder = newRightsHolder;
+        display.rightsExpiryTime = block.timestamp + duration;
 
-        emit DeviceUpdated(_deviceId);
+        emit RightsTransferred(
+            displayId,
+            msg.sender,
+            newRightsHolder,
+            display.rightsExpiryTime
+        );
     }
 
-    /**
-     * @dev Unregister a device.
-     * @param _deviceId ID of the device to unregister.
-     */
-    function unregisterDevice(uint256 _deviceId) external {
-        Device storage device = devices[_deviceId];
-        require(
-            msg.sender == device.publisher,
-            "Only publisher can unregister the device"
-        );
-        require(device.isRegistered, "Device is already unregistered");
-
-        device.isRegistered = false;
-
-        emit DeviceUnregistered(_deviceId);
+    function getCurrentRightsHolder(
+        uint256 displayId
+    ) external view returns (address) {
+        Display storage display = displays[displayId];
+        if (display.rightsExpiryTime < block.timestamp) {
+            return display.operator;
+        }
+        return display.currentRightsHolder;
     }
 
-    /**
-     * @dev Retrieve registered devices.
-     * @return registeredDevices List of registered device IDs.
-     */
-    function getRegisteredDevices()
-        external
-        view
-        returns (uint256[] memory registeredDevices)
-    {
-        uint256 count;
-        for (uint256 i = 0; i < nextDeviceId; i++) {
-            if (devices[i].isRegistered) {
-                count++;
-            }
-        }
+    function getOperatorDisplays(
+        address operator
+    ) external view returns (uint256[] memory) {
+        return operatorDisplays[operator];
+    }
 
-        registeredDevices = new uint256[](count);
-        uint256 index;
-        for (uint256 i = 0; i < nextDeviceId; i++) {
-            if (devices[i].isRegistered) {
-                registeredDevices[index] = devices[i].id;
-                index++;
-            }
-        }
+    function deactivateDisplay(uint256 displayId) external {
+        Display storage display = displays[displayId];
+        require(msg.sender == display.operator, "Not the operator");
+        display.isActive = false;
+    }
+}
+
+// DisplayNFT Contract
+contract DisplayNFT is ERC721, Ownable {
+    using Counters for Counters.Counter;
+    Counters.Counter private _tokenIds;
+
+    address public operatorRegistry;
+
+    constructor() ERC721("Display NFT", "DISP") {}
+
+    function setOperatorRegistry(address _operatorRegistry) external onlyOwner {
+        operatorRegistry = _operatorRegistry;
+    }
+
+    function mint(
+        address to,
+        string memory tokenURI
+    ) external returns (uint256) {
+        require(msg.sender == operatorRegistry, "Only registry can mint");
+
+        _tokenIds.increment();
+        uint256 tokenId = _tokenIds.current();
+
+        _mint(to, tokenId);
+        _setTokenURI(tokenId, tokenURI);
+
+        return tokenId;
     }
 }
