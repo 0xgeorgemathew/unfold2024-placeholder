@@ -4,8 +4,6 @@ out = 'out'
 libs = ['lib']
 solc_version = "0.8.23"
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
-[rpc_endpoints]
-baseSepolia = "https://sepolia.base.org"
-[etherscan]
-baseSepolia = { key = "${BASESCAN_API_KEY}", url = "https://api-sepolia.basescan.org/api" }
-base = { key = "${BASESCAN_API_KEY}", url = "https://api.basescan.org/api" }
+
+
+remappings = ["@openzeppelin/=lib/openzeppelin-contracts/"]
