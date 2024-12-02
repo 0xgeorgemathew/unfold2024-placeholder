@@ -2,9 +2,8 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 
-// Interface for the Display NFT contract
 interface IDisplayNFT {
     function mint(
         address to,
@@ -14,10 +13,7 @@ interface IDisplayNFT {
     function ownerOf(uint256 tokenId) external view returns (address);
 }
 
-// OperatorRegistry Contract
 contract OperatorRegistry is Ownable {
-    using Counters for Counters.Counter;
-
     struct Display {
         string macId;
         address operator;
@@ -27,8 +23,9 @@ contract OperatorRegistry is Ownable {
         uint256 rightsExpiryTime;
     }
 
-    Counters.Counter private _displayIds;
+    uint256 private _displayIds;
     IDisplayNFT public displayNFTContract;
+    string public baseTokenURI;
 
     mapping(uint256 => Display) public displays;
     mapping(string => bool) public registeredMacIds;
@@ -45,19 +42,35 @@ contract OperatorRegistry is Ownable {
         address indexed to,
         uint256 expiryTime
     );
+    event BaseURIUpdated(string newBaseURI);
 
-    constructor(address _displayNFTAddress) {
+    constructor(
+        address _displayNFTAddress,
+        string memory _baseTokenURI
+    ) Ownable(msg.sender) {
         displayNFTContract = IDisplayNFT(_displayNFTAddress);
+        baseTokenURI = _baseTokenURI;
+    }
+
+    function setBaseTokenURI(string memory newBaseURI) external onlyOwner {
+        baseTokenURI = newBaseURI;
+        emit BaseURIUpdated(newBaseURI);
+    }
+
+    function createTokenURI(
+        uint256 displayId,
+        string memory macId
+    ) internal view returns (string memory) {
+        return string(abi.encodePacked(baseTokenURI, displayId));
     }
 
     function registerDisplay(string memory macId) external returns (uint256) {
         require(!registeredMacIds[macId], "MAC ID already registered");
 
-        _displayIds.increment();
-        uint256 displayId = _displayIds.current();
+        _displayIds += 1;
+        uint256 displayId = _displayIds;
 
-        // Mint NFT for the operator
-        string memory tokenURI = generateTokenURI(displayId, macId); // You'll implement this off-chain
+        string memory tokenURI = createTokenURI(displayId, macId);
         uint256 tokenId = displayNFTContract.mint(msg.sender, tokenURI);
 
         displays[displayId] = Display({
@@ -123,14 +136,11 @@ contract OperatorRegistry is Ownable {
     }
 }
 
-// DisplayNFT Contract
-contract DisplayNFT is ERC721, Ownable {
-    using Counters for Counters.Counter;
-    Counters.Counter private _tokenIds;
-
+contract DisplayNFT is ERC721URIStorage, Ownable {
+    uint256 private _tokenIds;
     address public operatorRegistry;
 
-    constructor() ERC721("Display NFT", "DISP") {}
+    constructor() ERC721("Display NFT", "DISP") Ownable(msg.sender) {}
 
     function setOperatorRegistry(address _operatorRegistry) external onlyOwner {
         operatorRegistry = _operatorRegistry;
@@ -142,8 +152,8 @@ contract DisplayNFT is ERC721, Ownable {
     ) external returns (uint256) {
         require(msg.sender == operatorRegistry, "Only registry can mint");
 
-        _tokenIds.increment();
-        uint256 tokenId = _tokenIds.current();
+        _tokenIds += 1;
+        uint256 tokenId = _tokenIds;
 
         _mint(to, tokenId);
         _setTokenURI(tokenId, tokenURI);

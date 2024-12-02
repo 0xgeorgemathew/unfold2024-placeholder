@@ -7,3 +7,5 @@ solc_version = "0.8.23"
 
 
 remappings = ["@openzeppelin/=lib/openzeppelin-contracts/"]
+[etherscan]
+polygon-amoy = { key = "MERWPDDCPJ3STI7MYX826G955XE3A4BDQA", url = "https://www.oklink.com/api/explorer/v1/contract/verify/async/api/polygonAmoy" }
